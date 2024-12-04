@@ -50,9 +50,41 @@ def get_data_fetch_agent_prompt(restaurant_query: str) -> str:
     You are a helpful AI Assistant
     Your job is to identify the restaurant mentioned in the input query 
     Input Query: {restaurant_query}
-    Output END if the restaurant is successfully found
+    Output "END" if valid restaurant reviews are found
     """
     return prompt
+
+def get_review_analyzer_agent_prompt() -> str:
+    review_analyzer_agent_prompt = """
+    You are an expert review analyzer specializing in restaurant reviews. Your task is to carefully analyze restaurant reviews and extract numerical scores for both food quality and customer service.
+    You will be provided with a list of reviews for a specific restaurant.
+    
+    
+    For each review, you should assign two separate scores on a scale of 1-5:
+    - Food Quality Score (1-5)
+    - Customer Service Score (1-5)
+
+    Here is how you should assign these scores:
+    - If the food quality is described as "awful", "horrible", or "disgusting", assign a food quality score of 1.
+    - If the customer service is described as "awful", "horrible", or "disgusting", assign a customer service score of 1.
+    - If the food quality is described as "bad", "unpleasant", or "offensive", assign a food quality score of 2.
+    - If the customer service is described as "bad", "unpleasant", or "offensive", assign a customer service score of 2.
+    - If the food quality is described as "average", "uninspiring", or "forgettable", assign a food quality score of 3.
+    - If the customer service is described as "average", "uninspiring", or "forgettable", assign a customer service score of 3.
+    - If the food quality is described as "good", "enjoyable", or "satisfying", assign a food quality score of 4.
+    - If the customer service is described as "good", "enjoyable", or "satisfying", assign a customer service score of 4.
+    - If the food quality is described as "awesome", "incredible", or "amazing", assign a food quality score of 5.
+
+    Your output format should be that of two lists:
+    
+    food_scores: [Review 1: Review 1 food score, Review 2: Review 2 food score, ...]
+    service_scores: [Review 1: Review 1 customer service score, Review 2: Review 2 customer service score, ...]
+    
+    REMEMBER: Number of reviews should be equal to number of food_scores and number of service_scores
+    
+
+    """
+    return review_analyzer_agent_prompt
 
 
 # TODO: feel free to write as many additional functions as you'd like.
@@ -65,12 +97,43 @@ def check_message_content(msg):
         return None
 
 
+def review_summary_method(
+    sender: ConversableAgent,
+    recipient: ConversableAgent,
+    messages: List[Dict[str, str]]
+) -> str:
+    """
+    Custom summary method for review analysis conversation.
+    
+    Args:
+        sender: The agent sending the message
+        recipient: The agent receiving the message
+        messages: List of all messages in the conversation
+    
+    Returns:
+        str: The relevant summary of the conversation
+    """
+    
+    reviews = sender.chat_messages_for_summary(recipient)[-2]['content']
+    reviews = reviews.strip('[]')
+    reviews = reviews.split('",')
+    reviews = [f'Review {i+1}: '+review.strip(' "') for i,review in enumerate(reviews)]
+    print('Number of reviews: ', len(reviews))
+    #print('Number of reviews: ', len(reviews.split('\n')))
+    
+    return reviews
+
+
 # Do not modify the signature of the "main" function.
 def main(user_query: str):
     entrypoint_agent_system_message = """
-    You are a helpful AI assistant, your job is to send the input query
-    to the other agents to fetch required tool arguments and execute 
-    the registered tools with the tool arguments to get the final answer
+    Your task is to initiate a conversation with the data fetch agent 
+    to identify the restaurant mentioned in the input query and fetch the 
+    reviews for that restaurant by executing the fetch_restaurant_data function. 
+    On successful execution of the fetch_restaurant_data function, initiate a 
+    conversation with the review analyzer agent to analyze the reviews for the 
+    identified restaurant. Output "END" if valid scores for the reviews are returned 
+
     """
     # example LLM config for the entrypoint agent
     llm_config = {
@@ -84,7 +147,8 @@ def main(user_query: str):
         system_message=entrypoint_agent_system_message,
         llm_config=llm_config,
         human_input_mode="NEVER",
-        is_termination_msg=lambda msg: check_message_content(msg),
+        is_termination_msg=lambda msg: check_message_content(msg)
+        
     )
     entrypoint_agent.register_for_execution(name="fetch_restaurant_data")(
         fetch_restaurant_data
@@ -97,17 +161,45 @@ def main(user_query: str):
         system_message=get_data_fetch_agent_prompt(user_query),
         human_input_mode="NEVER",
         llm_config=llm_config,
+        
     )
     data_fetch_agent.register_for_llm(
         name="fetch_restaurant_data",
         description="fetches required restaurant data for the input query",
     )(fetch_restaurant_data)
 
-    result = entrypoint_agent.initiate_chat(
-        recipient=data_fetch_agent, message=user_query
+    review_analyzer_agent = ConversableAgent(
+        "review_analyzer_agent",
+        system_message=get_review_analyzer_agent_prompt(),
+        human_input_mode="NEVER",
+        llm_config=llm_config,
+        is_termination_msg=lambda msg: check_message_content(msg)
     )
-    print(result)
 
+
+
+    # result = entrypoint_agent.initiate_chat(
+    #     recipient=data_fetch_agent, message=user_query
+    # )
+
+    results = entrypoint_agent.initiate_chats(
+        [
+            {
+                "recipient": data_fetch_agent,
+                "message": user_query,
+                "summary_method": review_summary_method,
+               
+            },
+            {
+                "recipient": review_analyzer_agent,
+                "message": 'This is the list of reviews for analysis',
+                "max_turns": 2
+            }
+
+        ]
+    )
+    return results
+    
 
 # DO NOT modify this code below.
 if __name__ == "__main__":
@@ -115,3 +207,9 @@ if __name__ == "__main__":
         len(sys.argv) > 1
     ), "Please ensure you include a query for some restaurant when executing main."
     out = main(sys.argv[1])
+    food_scores,service_scores = out[-1].chat_history[-2]['content'].split('\n')
+    food_scores = food_scores.strip('[]')
+    service_scores = service_scores.strip('[]')
+    food_scores_ls = [(int)(x.split(':')[-1]) if x.split(':')[-1].strip().isdigit() else x.split(':')[-1].strip() for x in food_scores.split(',')]
+    service_scores_ls = [(int)(x.split(':')[-1]) if x.split(':')[-1].strip().isdigit() else x.split(':')[-1].strip() for x in service_scores.split(',')]
+    
