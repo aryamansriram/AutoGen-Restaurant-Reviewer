@@ -38,7 +38,12 @@ def calculate_overall_score(
     # {"Applebee's": 5.048}
     # NOTE: be sure to that the score includes AT LEAST 3  decimal places. The public tests will only read scores that have
     # at least 3 decimal places.
-    pass
+    score = 0
+    N = len(food_scores)
+    for i in range(N):
+        score += (food_scores[i] ** 2 * customer_service_scores[i]) ** 0.5
+    score = (score / (N * 125**0.5)) * 10
+    return {restaurant_name: f"{score:.3f}"}
 
 
 def get_data_fetch_agent_prompt(restaurant_query: str) -> str:
@@ -53,6 +58,7 @@ def get_data_fetch_agent_prompt(restaurant_query: str) -> str:
     Output "END" if valid restaurant reviews are found
     """
     return prompt
+
 
 def get_review_analyzer_agent_prompt() -> str:
     review_analyzer_agent_prompt = """
@@ -81,7 +87,7 @@ def get_review_analyzer_agent_prompt() -> str:
     service_scores: [Review 1: Review 1 customer service score, Review 2: Review 2 customer service score, ...]
     
     REMEMBER: Number of reviews should be equal to number of food_scores and number of service_scores
-    
+    Output "END" on successful completion of task
 
     """
     return review_analyzer_agent_prompt
@@ -100,28 +106,60 @@ def check_message_content(msg):
 def review_summary_method(
     sender: ConversableAgent,
     recipient: ConversableAgent,
-    messages: List[Dict[str, str]]
+    messages: List[Dict[str, str]],
 ) -> str:
     """
     Custom summary method for review analysis conversation.
-    
+
     Args:
         sender: The agent sending the message
         recipient: The agent receiving the message
         messages: List of all messages in the conversation
-    
+
     Returns:
         str: The relevant summary of the conversation
     """
-    
-    reviews = sender.chat_messages_for_summary(recipient)[-2]['content']
-    reviews = reviews.strip('[]')
+
+    reviews = sender.chat_messages_for_summary(recipient)[-2]["content"]
+    reviews = reviews.strip("[]")
     reviews = reviews.split('",')
-    reviews = [f'Review {i+1}: '+review.strip(' "') for i,review in enumerate(reviews)]
-    print('Number of reviews: ', len(reviews))
-    #print('Number of reviews: ', len(reviews.split('\n')))
-    
+    reviews = [
+        f"Review {i+1}: " + review.strip(' "') for i, review in enumerate(reviews)
+    ]
+    print("Number of reviews: ", len(reviews))
+    # print('Number of reviews: ', len(reviews.split('\n')))
+
     return reviews
+
+
+def get_scores_summary_method_prompt():
+    prompt = """
+    Given a conversation between two agents previously, return the following details as output:
+    - Restaurant name: The name of the restaurant whose reviews are being analyzed
+    - Food scores: The food quality scores assigned for each review
+    - Customer service scores: The customer service scores assigned for each review
+
+    Format the output as follows:
+    Restaurant name: <restaurant_name>
+    Food scores: [Review 1: Review 1 food score, Review 2: Review 2 food score, ...]
+    Customer service scores: [Review 1: Review 1 customer service score, Review 2: Review 2 customer service score, ...]
+    
+    Do not fetch any other information from the conversation.
+    """
+    return prompt
+
+
+def get_scorer_prompt():
+    prompt = """
+    Given the following details:
+    - Restaurant name: The name of the restaurant whose reviews are being analyzed
+    - Food scores: The food quality scores assigned for each review
+    - Customer service scores: The customer service scores assigned for each review
+
+    Return the appropriate arguments for the calculate_overall_score function.
+    Output "END" on successful completion of task
+    """
+    return prompt
 
 
 # Do not modify the signature of the "main" function.
@@ -132,8 +170,10 @@ def main(user_query: str):
     reviews for that restaurant by executing the fetch_restaurant_data function. 
     On successful execution of the fetch_restaurant_data function, initiate a 
     conversation with the review analyzer agent to analyze the reviews for the 
-    identified restaurant. Output "END" if valid scores for the reviews are returned 
-
+    identified restaurant. 
+    Finally, initiate a conversation with the scoring agent to calculate the 
+    overall score for the identified restaurant.
+    
     """
     # example LLM config for the entrypoint agent
     llm_config = {
@@ -147,11 +187,13 @@ def main(user_query: str):
         system_message=entrypoint_agent_system_message,
         llm_config=llm_config,
         human_input_mode="NEVER",
-        is_termination_msg=lambda msg: check_message_content(msg)
-        
+        is_termination_msg=lambda msg: check_message_content(msg),
     )
     entrypoint_agent.register_for_execution(name="fetch_restaurant_data")(
         fetch_restaurant_data
+    )
+    entrypoint_agent.register_for_execution(name="calculate_overall_score")(
+        calculate_overall_score
     )
 
     # TODO
@@ -161,7 +203,6 @@ def main(user_query: str):
         system_message=get_data_fetch_agent_prompt(user_query),
         human_input_mode="NEVER",
         llm_config=llm_config,
-        
     )
     data_fetch_agent.register_for_llm(
         name="fetch_restaurant_data",
@@ -173,14 +214,19 @@ def main(user_query: str):
         system_message=get_review_analyzer_agent_prompt(),
         human_input_mode="NEVER",
         llm_config=llm_config,
-        is_termination_msg=lambda msg: check_message_content(msg)
     )
 
+    scoring_agent = ConversableAgent(
+        "scoring_agent",
+        system_message=get_scorer_prompt(),
+        human_input_mode="NEVER",
+        llm_config=llm_config,
+    )
 
-
-    # result = entrypoint_agent.initiate_chat(
-    #     recipient=data_fetch_agent, message=user_query
-    # )
+    scoring_agent.register_for_llm(
+        name="calculate_overall_score",
+        description="calculates overall score given the food and customer service scores for a given restaurant",
+    )(calculate_overall_score)
 
     results = entrypoint_agent.initiate_chats(
         [
@@ -188,18 +234,21 @@ def main(user_query: str):
                 "recipient": data_fetch_agent,
                 "message": user_query,
                 "summary_method": review_summary_method,
-               
             },
             {
                 "recipient": review_analyzer_agent,
-                "message": 'This is the list of reviews for analysis',
-                "max_turns": 2
-            }
-
+                "message": "This is the list of reviews for analysis",
+            },
+            {
+                "recipient": scoring_agent,
+                "message": "These are the scores and restaurant name required for score calculation",
+                "summary_method": "reflection_with_llm",
+                "summary_args": {"summary_prompt": get_scores_summary_method_prompt()},
+            },
         ]
     )
     return results
-    
+
 
 # DO NOT modify this code below.
 if __name__ == "__main__":
@@ -207,9 +256,3 @@ if __name__ == "__main__":
         len(sys.argv) > 1
     ), "Please ensure you include a query for some restaurant when executing main."
     out = main(sys.argv[1])
-    food_scores,service_scores = out[-1].chat_history[-2]['content'].split('\n')
-    food_scores = food_scores.strip('[]')
-    service_scores = service_scores.strip('[]')
-    food_scores_ls = [(int)(x.split(':')[-1]) if x.split(':')[-1].strip().isdigit() else x.split(':')[-1].strip() for x in food_scores.split(',')]
-    service_scores_ls = [(int)(x.split(':')[-1]) if x.split(':')[-1].strip().isdigit() else x.split(':')[-1].strip() for x in service_scores.split(',')]
-    
