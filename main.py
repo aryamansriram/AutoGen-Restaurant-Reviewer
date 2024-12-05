@@ -5,13 +5,19 @@ import os
 
 
 def fetch_restaurant_data(restaurant_name: str) -> Dict[str, List[str]]:
-    # TODO
-    # This function takes in a restaurant name and returns the reviews for that restaurant.
-    # The output should be a dictionary with the key being the restaurant name and the value being a list of reviews for that restaurant.
-    # The "data fetch agent" should have access to this function signature, and it should be able to suggest this as a function call.
-    # Example:
-    # > fetch_restaurant_data("Applebee's")
-    # {"Applebee's": ["The food at Applebee's was average, with nothing particularly standing out.", ...]}
+    """
+    Fetches reviews for a given restaurant from a text file.
+
+    Args:
+        restaurant_name (str): The name of the restaurant to fetch reviews for.
+
+    Returns:
+        Dict[str, List[str]]: A dictionary with the restaurant name as key and a list of reviews as value.
+
+    Example:
+        >>> fetch_restaurant_data("Applebee's")
+        {"Applebee's": ["The food at Applebee's was average, with nothing particularly standing out.", ...]}
+    """
 
     with open("restaurant-data.txt", "r") as f:
         out = f.readlines()
@@ -22,22 +28,28 @@ def fetch_restaurant_data(restaurant_name: str) -> Dict[str, List[str]]:
             dset[resto.lower()] = []
         dset[resto.lower()].append(review)
 
-    return dset[restaurant_name.lower()]
+    return {restaurant_name.lower(): dset[restaurant_name.lower()]}
 
 
 def calculate_overall_score(
     restaurant_name: str, food_scores: List[int], customer_service_scores: List[int]
 ) -> Dict[str, float]:
-    # TODO
-    # This function takes in a restaurant name, a list of food scores from 1-5, and a list of customer service scores from 1-5
-    # The output should be a score between 0 and 10, which is computed as the following:
-    # SUM(sqrt(food_scores[i]**2 * customer_service_scores[i]) * 1/(N * sqrt(125)) * 10
-    # The above formula is a geometric mean of the scores, which penalizes food quality more than customer service.
-    # Example:
-    # > calculate_overall_score("Applebee's", [1, 2, 3, 4, 5], [1, 2, 3, 4, 5])
-    # {"Applebee's": 5.048}
-    # NOTE: be sure to that the score includes AT LEAST 3  decimal places. The public tests will only read scores that have
-    # at least 3 decimal places.
+    """
+    Calculates an overall score for a restaurant based on food and customer service ratings.
+
+    Args:
+        restaurant_name (str): Name of the restaurant.
+        food_scores (List[int]): List of food quality scores (1-5).
+        customer_service_scores (List[int]): List of customer service scores (1-5).
+
+    Returns:
+        Dict[str, float]: Dictionary with restaurant name as key and computed score as value.
+                         Score is between 0-10 with at least 3 decimal places.
+
+    Example:
+        >>> calculate_overall_score("Applebee's", [1, 2, 3, 4, 5], [1, 2, 3, 4, 5])
+        {"Applebee's": 5.048}
+    """
     score = 0
     N = len(food_scores)
     for i in range(N):
@@ -47,10 +59,15 @@ def calculate_overall_score(
 
 
 def get_data_fetch_agent_prompt(restaurant_query: str) -> str:
-    # TODO
-    # It may help to organize messages/prompts within a function which returns a string.
-    # For example, you could use this function to return a prompt for the data fetch agent
-    # to use to fetch reviews for a specific restaurant.
+    """
+    Generates a prompt for the data fetch agent to identify and fetch restaurant reviews.
+
+    Args:
+        restaurant_query (str): The user's query containing a restaurant name.
+
+    Returns:
+        str: A formatted prompt string for the data fetch agent.
+    """
     prompt = f"""
     You are a helpful AI Assistant
     Your job is to identify the restaurant mentioned in the input query 
@@ -61,6 +78,13 @@ def get_data_fetch_agent_prompt(restaurant_query: str) -> str:
 
 
 def get_review_analyzer_agent_prompt() -> str:
+    """
+    Generates a prompt for the review analyzer agent with scoring guidelines.
+
+    Returns:
+        str: A detailed prompt containing instructions for analyzing restaurant reviews
+             and assigning food quality and customer service scores.
+    """
     review_analyzer_agent_prompt = """
     You are an expert review analyzer specializing in restaurant reviews. Your task is to carefully analyze restaurant reviews and extract numerical scores for both food quality and customer service.
     You will be provided with a list of reviews for a specific restaurant.
@@ -93,10 +117,16 @@ def get_review_analyzer_agent_prompt() -> str:
     return review_analyzer_agent_prompt
 
 
-# TODO: feel free to write as many additional functions as you'd like.
-
-
 def check_message_content(msg):
+    """
+    Checks if a message contains the termination signal "END".
+
+    Args:
+        msg (Dict): Message dictionary containing content.
+
+    Returns:
+        bool or None: True if "END" is in content, None if content is None.
+    """
     if msg["content"] is not None:
         return "END" in msg["content"]
     else:
@@ -112,12 +142,12 @@ def review_summary_method(
     Custom summary method for review analysis conversation.
 
     Args:
-        sender: The agent sending the message
-        recipient: The agent receiving the message
-        messages: List of all messages in the conversation
+        sender (ConversableAgent): The agent sending the message.
+        recipient (ConversableAgent): The agent receiving the message.
+        messages (List[Dict[str, str]]): List of all messages in the conversation.
 
     Returns:
-        str: The relevant summary of the conversation
+        List[str]: List of formatted review strings.
     """
 
     reviews = sender.chat_messages_for_summary(recipient)[-2]["content"]
@@ -133,6 +163,13 @@ def review_summary_method(
 
 
 def get_scores_summary_method_prompt():
+    """
+    Generates a prompt for summarizing restaurant scores from a conversation.
+
+    Returns:
+        str: A prompt template requesting restaurant name, food scores,
+             and customer service scores in a specific format.
+    """
     prompt = """
     Given a conversation between two agents previously, return the following details as output:
     - Restaurant name: The name of the restaurant whose reviews are being analyzed
@@ -150,6 +187,13 @@ def get_scores_summary_method_prompt():
 
 
 def get_scorer_prompt():
+    """
+    Generates a prompt for the scoring agent to calculate overall restaurant scores.
+
+    Returns:
+        str: A prompt template for processing restaurant scores and preparing
+             arguments for the calculate_overall_score function.
+    """
     prompt = """
     Given the following details:
     - Restaurant name: The name of the restaurant whose reviews are being analyzed
@@ -164,6 +208,17 @@ def get_scorer_prompt():
 
 # Do not modify the signature of the "main" function.
 def main(user_query: str):
+    """
+    Main function to process a user's restaurant query through a multi-agent system.
+
+    Args:
+        user_query (str): User's input query about a restaurant.
+
+    The function orchestrates multiple agents to:
+    1. Fetch restaurant data
+    2. Analyze reviews
+    3. Calculate overall scores
+    """
     entrypoint_agent_system_message = """
     Your task is to initiate a conversation with the data fetch agent 
     to identify the restaurant mentioned in the input query and fetch the 
@@ -196,8 +251,6 @@ def main(user_query: str):
         calculate_overall_score
     )
 
-    # TODO
-    # Create more agents here.
     data_fetch_agent = ConversableAgent(
         "data_fetch_agent",
         system_message=get_data_fetch_agent_prompt(user_query),
